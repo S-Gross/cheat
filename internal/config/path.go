@@ -4,56 +4,129 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
+	"runtime"
 
 	"github.com/mitchellh/go-homedir"
 )
 
+const (
+	configFilePathEnvVar = "CHEAT_CONFIG_PATH"
+	configFileName       = "conf.yml"
+	configFolder         = "cheat"
+)
+
+// PreferredFolderPath returns the default cheat folder path
+func PreferredFolderPath() (string, error) {
+
+	// if CHEAT_CONFIG_PATH is set, honor it
+	envFilePath := os.Getenv(configFilePathEnvVar)
+	if envFilePath != "" {
+		return filepath.Dir(envFilePath), nil
+	}
+
+	switch runtime.GOOS {
+
+	case "darwin":
+
+		// macOS default folder path
+		return path.Join("~/Library/Application Support", configFolder), nil
+
+	case "linux":
+
+		// Linux default folder path
+		xdgConfigHome := os.Getenv("XDG_CONFIG_HOME")
+		if xdgConfigHome != "" {
+			return path.Join(xdgConfigHome, configFolder), nil
+		}
+		return path.Join("~/.config", configFolder), nil
+
+	case "windows":
+
+		// Windows default folder path
+		return filepath.Clean(path.Join(os.Getenv("APPDATA"), configFolder)), nil
+
+	default:
+
+		// Unsupported platforms
+		return "", fmt.Errorf("unsupported os: %s", runtime.GOOS)
+
+	}
+}
+
+// PreferredConfigPath returns the default config file path
+func PreferredConfigPath() (string, error) {
+
+	// if CHEAT_CONFIG_PATH is set, honor it
+	envFilePath := os.Getenv(configFilePathEnvVar)
+	if envFilePath != "" {
+		return envFilePath, nil
+	}
+
+	configFolder, err := PreferredFolderPath()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Clean(path.Join(configFolder, configFileName)), nil
+}
+
 // Path returns the config file path
-func Path(sys string) (string, error) {
+func Path() (string, error) {
+
+	// if CHEAT_CONFIG_PATH is set, return it
+	envFilePath, err := getExpandedEnv(configFilePathEnvVar)
+	if err != nil {
+		return "", err
+	}
+
+	if envFilePath != "" {
+		return envFilePath, nil
+	}
 
 	var paths []string
 
-	// if CHEAT_CONFIG_PATH is set, return it
-	if os.Getenv("CHEAT_CONFIG_PATH") != "" {
+	switch runtime.GOOS {
 
-		// expand ~
-		expanded, err := homedir.Expand(os.Getenv("CHEAT_CONFIG_PATH"))
-		if err != nil {
-			return "", fmt.Errorf("failed to expand ~: %v", err)
-		}
+	case "darwin":
 
-		return expanded, nil
+		homePath := os.Getenv("HOME")
 
-		// OSX config paths
-	} else if sys == "darwin" {
-
+		// macOS config paths
 		paths = []string{
-			path.Join(os.Getenv("XDG_CONFIG_HOME"), "/cheat/conf.yml"),
-			path.Join(os.Getenv("HOME"), ".config/cheat/conf.yml"),
-			path.Join(os.Getenv("HOME"), ".cheat/conf.yml"),
+			path.Join(homePath, "Library/Application Support", configFolder, configFileName),
+			path.Join(os.Getenv("XDG_CONFIG_HOME"), configFolder, configFileName),
+			path.Join(homePath, ".config", configFolder, configFileName),
+			path.Join(homePath, "."+configFolder, configFileName),
+			path.Join("/Library/Application Support", configFolder, configFileName),
+			path.Join("/etc", configFolder, configFileName),
 		}
+
+	case "linux":
+
+		homePath := os.Getenv("HOME")
 
 		// Linux config paths
-	} else if sys == "linux" {
-
 		paths = []string{
-			path.Join(os.Getenv("XDG_CONFIG_HOME"), "/cheat/conf.yml"),
-			path.Join(os.Getenv("HOME"), ".config/cheat/conf.yml"),
-			path.Join(os.Getenv("HOME"), ".cheat/conf.yml"),
-			"/etc/cheat/conf.yml",
+			path.Join(os.Getenv("XDG_CONFIG_HOME"), configFolder, configFileName),
+			path.Join(homePath, ".config", configFolder, configFileName),
+			path.Join(homePath, "."+configFolder, configFileName),
+			path.Join("/etc", configFolder, configFileName),
 		}
+
+	case "windows":
 
 		// Windows config paths
-	} else if sys == "windows" {
-
 		paths = []string{
-			fmt.Sprintf("%s/cheat/conf.yml", os.Getenv("APPDATA")),
-			fmt.Sprintf("%s/cheat/conf.yml", os.Getenv("PROGRAMDATA")),
+			filepath.Clean(path.Join(os.Getenv("APPDATA"), configFolder, configFileName)),
+			filepath.Clean(path.Join(os.Getenv("PROGRAMDATA"), configFolder, configFileName)),
 		}
 
+	default:
+
 		// Unsupported platforms
-	} else {
-		return "", fmt.Errorf("unsupported os: %s", sys)
+		return "", fmt.Errorf("unsupported os: %s", runtime.GOOS)
+
 	}
 
 	// check if the config file exists on any paths
@@ -65,4 +138,22 @@ func Path(sys string) (string, error) {
 
 	// we can't find the config file if we make it this far
 	return "", fmt.Errorf("could not locate config file")
+}
+
+// getExpandedEnv returns an expanded environment variable if set
+func getExpandedEnv(envVar string) (string, error) {
+
+	value := os.Getenv(envVar)
+	if value != "" {
+
+		// expand environment variable
+		expanded, err := homedir.Expand(value)
+		if err != nil {
+			return "", fmt.Errorf("failed to expand %s: %v", envVar, err)
+		}
+
+		return expanded, nil
+	}
+
+	return "", nil
 }

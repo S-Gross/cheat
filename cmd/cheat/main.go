@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
+	"text/template"
 
 	"github.com/docopt/docopt-go"
 
@@ -32,9 +34,17 @@ func main() {
 	}
 
 	// load the config file
-	confpath, err := config.Path(runtime.GOOS)
+	confpath, err := config.Path()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "could not locate config file")
+		fmt.Fprint(os.Stderr, "could not locate config file")
+
+		initConfigCommand, err := generateInitConfigCommand()
+		if err == nil {
+			fmt.Fprintln(os.Stderr, "; to initialize a config file:")
+			fmt.Fprint(os.Stderr, "  ", initConfigCommand)
+		}
+
+		fmt.Fprintln(os.Stderr)
 		os.Exit(1)
 	}
 
@@ -89,10 +99,66 @@ func main() {
 		cmd = cmdView
 
 	default:
-		fmt.Println(usage())
+
+		initConfigCommand, err := generateInitConfigCommand()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "could not generate init command: %v\n", err)
+			os.Exit(1)
+		}
+
+		type UsageValues struct {
+			InitConfigCommand string
+			PathSeparator     string
+		}
+
+		values := UsageValues{initConfigCommand, string(os.PathSeparator)}
+		t := template.Must(template.New("usage").Parse(usage()))
+
+		err = t.Execute(os.Stdout, values)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "could not execute template usage: ", err)
+			os.Exit(1)
+		}
+
+		fmt.Println()
 		os.Exit(0)
 	}
 
 	// execute the command
 	cmd(opts, conf)
+}
+
+func generateInitConfigCommand() (string, error) {
+
+	prefFolderPath, err := config.PreferredFolderPath()
+	if err != nil {
+		return "", err
+	}
+
+	prefConfigPath, err := config.PreferredConfigPath()
+	if err != nil {
+		return "", err
+	}
+
+	switch runtime.GOOS {
+	case "windows":
+		var collapse = func(path string) string {
+			var appDataPath = os.Getenv("APPDATA")
+			if strings.HasPrefix(path, appDataPath) {
+				path = "$env:APPDATA" + path[len(appDataPath):]
+			}
+			return path
+		}
+
+		return fmt.Sprintf("md -Force \"%s\" | Out-Null; cheat.exe --init > \"%s\"",
+			collapse(prefFolderPath), collapse(prefConfigPath)), nil
+
+	default: /* posix */
+		var escape = func(path string) string {
+			return strings.ReplaceAll(path, " ", "\\ ")
+		}
+
+		return fmt.Sprintf("mkdir -p %s && cheat --init > %s",
+			escape(prefFolderPath), escape(prefConfigPath)), nil
+	}
 }
